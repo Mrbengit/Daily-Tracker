@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
 <meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<link rel="manifest" href="manifest.webmanifest"><meta name="theme-color" content="#1e2761"><link rel="apple-touch-icon" href="icon-192.png"><meta name="apple-mobile-web-app-capable" content="yes"><meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <title>Daily Tracker</title>
 <style>
 :root{--bg:#f5f6fb;--card:#fff;--text:#1e2761;--muted:#6b7794;--line:#dfe3f0;--accent:#1e2761;--on:#2e9e6b;--ok:#2f7fb8;--amber:#e0a526;--miss:#fbe3e3;--missx:#cf4a4a;--off:#c9cfe0;--fut:#e6e8f0;
@@ -73,6 +73,7 @@ textarea{width:100%;box-sizing:border-box;font:inherit;padding:10px;border:1px s
 .btns .pri{background:var(--accent);color:var(--bg);border:0;font-weight:600}.btns .dng{color:var(--missx);border-color:var(--missx)}
 .csvb{margin-top:10px;font:inherit;padding:10px 14px;border-radius:10px;border:1px solid var(--line);background:var(--card);color:var(--text);cursor:pointer}
 .add .sm{width:90px;flex:none}
+button{touch-action:manipulation}.add input,.add select,textarea,.box input,.box textarea{font-size:16px}.x{min-width:44px;min-height:44px}.banner{background:var(--miss);color:var(--missx);border-radius:12px;padding:10px 12px;font-size:14px;margin-bottom:12px;display:none}
 #toast{position:fixed;left:50%;transform:translateX(-50%);bottom:calc(24px + env(safe-area-inset-bottom,0px));background:var(--accent);color:var(--bg);padding:10px 16px;border-radius:20px;font-weight:600;font-size:14px;opacity:0;pointer-events:none;transition:opacity .2s}
 #toast.show{opacity:1}
 </style>
@@ -80,6 +81,7 @@ textarea{width:100%;box-sizing:border-box;font:inherit;padding:10px;border:1px s
 <body>
 <div class="wrap">
   <h1>Daily Tracker</h1>
+  <div class="banner" id="banner">Your phone date is earlier than last time. Editing is paused until the date is corrected.</div>
   <div class="stats">
     <div class="stat s1"><div class="ic">🪙</div><b id="coins">0</b><span>Total coins</span></div>
     <div class="stat s2"><div class="ic">⚡</div><b id="streak">0</b><span>Day streak</span></div>
@@ -113,6 +115,7 @@ textarea{width:100%;box-sizing:border-box;font:inherit;padding:10px;border:1px s
   <h2>What I am learning about myself</h2>
   <div class="card ins" id="ins"></div>
 
+  <h2 id="stopH" style="display:none">Stopped tasks</h2><div class="card" id="stopped" style="display:none"></div>
   <h2>Add a task</h2>
   <div class="add">
     <input id="newName" placeholder="e.g. Pay electricity bill" maxlength="60">
@@ -136,19 +139,21 @@ const MILE={3:30,7:100,14:200,30:500};
 const MOODS=["😞","😕","😐","🙂","😄"];
 const DOW=["Sun","Mon","Tue","Wed","Thu","Fri","Sat"];
 let state={tasks:DEFAULTS.slice(),log:{},moods:{},notes:{}};
-let docRef=null,mode="local",dl=null;
+let docRef=null,mode="local",dl=null,dirty=false;
 const pad=n=>String(n).padStart(2,"0");
 const ymd=d=>d.getFullYear()+"-"+pad(d.getMonth()+1)+"-"+pad(d.getDate());
 const parse=s=>{const p=s.split("-");return new Date(+p[0],+p[1]-1,+p[2])};
 const today=()=>ymd(new Date());
 function addDays(s,n){const d=parse(s);d.setDate(d.getDate()+n);return ymd(d)}
-const editable=d=>d===today()||d===addDays(today(),-1);
+function clockBad(){return today()<(state.lastSeen||"0")}
+const editable=d=>!clockBad()&&(d===today()||d===addDays(today(),-1));
 const dimOf=s=>{const d=parse(s);return new Date(d.getFullYear(),d.getMonth()+1,0).getDate()};
 const $=id=>document.getElementById(id);
 let sel=today(),vy=new Date().getFullYear(),vm=new Date().getMonth();
 
 function normalize(){
   state.moods=state.moods||{};state.notes=state.notes||{};state.log=state.log||{};
+  if(today()>(state.lastSeen||"0"))state.lastSeen=today();
   if(!state.start){const k=Object.keys(state.log).sort();state.start=k[0]||today()}
 }
 function tickOn(t,d){return !!(state.log[d]||{})[t.id]}
@@ -169,7 +174,7 @@ function shows(t,date){
 }
 const tasksFor=d=>state.tasks.filter(t=>shows(t,d));
 function ticked(d){const l=state.log[d]||{};return Object.keys(l).filter(k=>l[k]).length}
-const counted=d=>ticked(d)>=2;
+function counted(d){const n=tasksFor(d).length;return ticked(d)>=Math.min(2,Math.max(1,n))}
 function allDone(d){const ts=tasksFor(d).filter(t=>t.type==="daily");return ts.length>=2&&ts.every(t=>tickOn(t,d))}
 function dayCoins(d){const n=ticked(d);return n*5+(counted(d)?10:0)+(allDone(d)?20:0)}
 function status(d){
@@ -202,6 +207,7 @@ function sub(t,date){
 
 function render(){
   const td=today(),st=stats();
+  $("banner").style.display=clockBad()?"block":"none";
   $("coins").textContent=st.coins;$("streak").textContent=st.streak;
   let lv=LEVELS[0][1];LEVELS.forEach(l=>{if(st.coins>=l[0])lv=l[1]});$("level").textContent=lv;
   const nm=[3,7,14,30].find(m=>m>st.streak);
@@ -218,7 +224,7 @@ function render(){
     if(ds<=td){if(counted(ds))cdays++;ttot+=ticked(ds)}
     const b=el("button","d "+s+(ds===sel?" sel":"")+(ds===td?" today":"")+(ms.has(ds)?" ms":""),s==="pend"?"!":s==="unm"?"×":String(d));
     b.setAttribute("aria-label",ds+" "+s);
-    if(s!=="fut")b.onclick=()=>{sel=ds;render()};else b.disabled=true;
+    if(s!=="fut")b.onclick=()=>{flushNote();sel=ds;render()};else b.disabled=true;
     g.appendChild(b);
   }
   $("monthSum").textContent="This month: "+cdays+" counted day"+(cdays===1?"":"s")+", "+ttot+" tasks done";
@@ -251,7 +257,7 @@ function render(){
     mo.style.display="";noteEl.style.display="";ro.style.display="none";
     MOODS.forEach((e,i)=>{const b=el("button",state.moods[sel]===i+1?"on":"",e);b.setAttribute("aria-label","Mood "+(i+1));
       b.onclick=()=>{state.moods[sel]=state.moods[sel]===i+1?0:i+1;save();render()};mo.appendChild(b)});
-    noteEl.value=state.notes[sel]||"";
+    if(document.activeElement!==noteEl||noteEl.dataset.date!==sel)noteEl.value=state.notes[sel]||"";noteEl.dataset.date=sel;
   }else{
     mo.style.display="none";noteEl.style.display="none";ro.style.display="";
     const m=state.moods[sel];
@@ -260,6 +266,10 @@ function render(){
   }
   const bd=$("badges");bd.innerHTML="";
   [[3,"🥉"],[7,"🥈"],[14,"🥇"],[30,"🏆"]].forEach(a=>{const e=el("div","bd"+(st.best>=a[0]?" got":""));e.innerHTML='<div class="ic">'+a[1]+"</div>"+a[0]+" days";bd.appendChild(e)});
+  const stp=state.tasks.filter(t=>t.endedOn),sc=$("stopped");sc.innerHTML="";
+  $("stopH").style.display=sc.style.display=stp.length?"":"none";
+  stp.forEach(t=>{const r=el("div","row");r.style.setProperty("--tc","var(--off)");const n=el("div","name",t.name);n.appendChild(el("small","","Stops from "+t.endedOn));
+    const b=el("button","back","Restore");b.onclick=()=>{delete t.endedOn;save();render();toast("Task restored")};r.append(n,b);sc.appendChild(r)});
   insights();
 }
 
@@ -329,13 +339,16 @@ $("csvBtn").onclick=async()=>{
     const bt=el("div","btns");const c=el("button","pri","Close");c.onclick=closeModal;bt.appendChild(c);b.appendChild(bt);ta.focus();ta.select()});
 };
 $("modal").addEventListener("click",e=>{if(e.target.id==="modal")closeModal()});
-$("toToday").onclick=()=>{sel=today();const d=new Date();vy=d.getFullYear();vm=d.getMonth();render()};
+$("toToday").onclick=()=>{flushNote();sel=today();const d=new Date();vy=d.getFullYear();vm=d.getMonth();render()};
 $("prev").onclick=()=>{vm--;if(vm<0){vm=11;vy--}render()};
 $("nextM").onclick=()=>{vm++;if(vm>11){vm=0;vy++}render()};
-$("note").addEventListener("change",e=>{if(editable(sel)){state.notes[sel]=e.target.value.trim();save()}});
+let nt;$("note").addEventListener("input",e=>{const d=e.target.dataset.date;if(!d||!editable(d))return;state.notes[d]=e.target.value;dirty=true;clearTimeout(nt);nt=setTimeout(flushNote,600)});
+function flushNote(){clearTimeout(nt);if(!dirty)return;dirty=false;save()}
+$("note").addEventListener("blur",flushNote);
 $("newType").onchange=()=>{const v=$("newType").value;$("newDow").style.display=v==="weekly"?"":"none";$("newDom").style.display=v==="monthly"?"":"none"};
 $("addBtn").onclick=()=>{
   const i=$("newName"),n=i.value.trim();if(!n)return;
+  if(state.tasks.some(x=>!x.endedOn&&x.name.toLowerCase()===n.toLowerCase())){toast("This task already exists");return}
   const ty=$("newType").value,t={id:"t"+Date.now(),name:n,type:ty,created:today()};
   if(ty==="weekly")t.dow=+$("newDow").value;
   if(ty==="monthly")t.dom=Math.min(31,Math.max(1,+$("newDom").value||1));
@@ -344,13 +357,14 @@ $("addBtn").onclick=()=>{
 $("newName").addEventListener("keydown",e=>{if(e.key==="Enter")$("addBtn").click()});
 
 async function save(){
-  try{localStorage.setItem("daily-tracker-v1",JSON.stringify(state))}catch(e){}
-  try{if(mode==="db"&&docRef)await docRef.set({state:JSON.stringify(state)})}
+  state.updated=Date.now();
+  try{localStorage.setItem("daily-tracker-v1",JSON.stringify(state))}catch(e){$("saveNote").textContent="This browser cannot save data. Please use Export CSV."}
+  try{if(mode==="db"&&docRef){await docRef.set({state:JSON.stringify(state)});$("saveNote").textContent="Saved ✓ to your account"}}
   catch(e){$("saveNote").textContent="Could not save to your account. Please check your connection."}
 }
 async function pull(){
-  if(mode!=="db"||!docRef)return;
-  try{const s=await docRef.get();if(s.exists&&s.data()&&s.data().state){state=JSON.parse(s.data().state);normalize();render()}}catch(e){}
+  if(mode!=="db"||!docRef||dirty)return;
+  try{const x=await docRef.get();if(x.exists&&x.data()&&x.data().state){const r=JSON.parse(x.data().state);if((r.updated||0)>(state.updated||0)){state=r;normalize();render()}}}catch(e){}
 }
 async function load(){
   try{const r=localStorage.getItem("daily-tracker-v1");if(r)state=JSON.parse(r)}catch(e){}
@@ -363,7 +377,7 @@ async function load(){
       if(uid){
         docRef=db.doc("data/users/"+uid+"/tracker");
         const snap=await docRef.get();
-        if(snap.exists&&snap.data()&&snap.data().state){state=JSON.parse(snap.data().state)}
+        if(snap.exists&&snap.data()&&snap.data().state){const r=JSON.parse(snap.data().state);if((r.updated||0)>=(state.updated||0))state=r;else await docRef.set({state:JSON.stringify(state)})}
         else{await docRef.set({state:JSON.stringify(state)})}
         mode="db";normalize();
         $("saveNote").textContent="Your data is saved privately to your account.";
@@ -373,7 +387,12 @@ async function load(){
   }catch(e){}
   if(mode==="local")$("saveNote").textContent="Saved on this phone and browser only. Export CSV regularly as a backup.";
 }
-document.addEventListener("visibilitychange",()=>{if(!document.hidden)pull()});
+let lastDay=today();
+function dayCheck(){const t=today();if(t!==lastDay){if(sel===lastDay)sel=t;lastDay=t;const d=new Date();vy=d.getFullYear();vm=d.getMonth();normalize();render()}}
+setInterval(dayCheck,30000);window.addEventListener("focus",dayCheck);window.addEventListener("storage",e=>{if(e.key==="daily-tracker-v1"&&e.newValue&&!dirty){try{state=JSON.parse(e.newValue);normalize();render()}catch(x){}}});
+document.addEventListener("visibilitychange",()=>{if(!document.hidden){dayCheck();pull()}else flushNote()});
+if("serviceWorker" in navigator)navigator.serviceWorker.register("sw.js").catch(()=>{});
+try{navigator.storage&&navigator.storage.persist&&navigator.storage.persist()}catch(e){}
 load();
 </script>
 </body>
